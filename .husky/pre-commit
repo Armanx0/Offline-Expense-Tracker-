@@ -1,2 +1,2 @@
-﻿#!/usr/bin/env sh
-pnpm lint-staged
+#!/usr/bin/env sh
+corepack pnpm lint-staged

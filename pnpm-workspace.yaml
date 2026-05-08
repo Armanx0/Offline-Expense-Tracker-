@@ -1,5 +1,0 @@
-packages:
-  - apps/mobile
-  - packages/contracts
-ignoredBuiltDependencies:
-  - esbuild

@@ -69,13 +69,5 @@ export default tseslint.config(
       "react-hooks/exhaustive-deps": "error"
     }
   },
-  {
-    files: ["apps/mobile/**/*.{ts,tsx}"],
-    languageOptions: {
-      globals: {
-        ...globals.browser
-      }
-    }
-  },
   prettierConfig
 );
