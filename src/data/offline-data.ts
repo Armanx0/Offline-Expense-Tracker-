@@ -12,28 +12,45 @@ import {
 import * as FileSystem from "expo-file-system";
 import { Platform } from "react-native";
 import {
+  addDebtAmountRequestSchema,
+  createDebtRequestSchema,
+  debtDirectionSchema,
+  listDebtsQuerySchema,
+  recordDebtPaymentRequestSchema,
   categorySchema,
   createCategoryRequestSchema,
   createExpenseRequestSchema,
   listExpensesQuerySchema,
+  updateDebtMetadataRequestSchema,
   updateCategoryRequestSchema,
   updateExpenseRequestSchema,
   userSchema,
+  type AddDebtAmountRequest,
   type CategoryDto,
+  type CreateDebtRequest,
   type CreateCategoryRequest,
   type CreateExpenseRequest,
+  type DebtDirection,
+  type DebtDto,
+  type DebtEntryDto,
+  type DebtStatus,
+  type DebtSummary,
   type DashboardOverview,
   type ExpenseDto,
   type ListExpensesQuery,
+  type ListDebtsQuery,
   type PaginatedResponse,
   type Period,
+  type RecordDebtPaymentRequest,
+  type UpdateDebtMetadataRequest,
   type UpdateCategoryRequest,
   type UpdateExpenseRequest,
   type UserDto
 } from "../contracts";
 import { z } from "zod";
 
-const DATABASE_VERSION = 1;
+const LEGACY_DATABASE_VERSION = 1;
+const DATABASE_VERSION = 2;
 const DEFAULT_PROFILE_NAME = "Local Wallet";
 const DEFAULT_PROFILE_EMAIL = "offline@expense-tracker.local";
 const DEFAULT_PROFILE_CURRENCY = "INR";
@@ -59,14 +76,46 @@ const offlineExpenseRecordSchema = z.object({
   categoryId: z.string().cuid()
 });
 
-const offlineDatabaseSchema = z.object({
-  version: z.literal(DATABASE_VERSION),
+const offlineDebtEntryRecordSchema = z.object({
+  id: z.string().cuid(),
+  type: z.enum(["initial", "increment", "payment"]),
+  amountMinor: z.number().int().positive(),
+  occurredAt: z.string().datetime(),
+  createdAt: z.string().datetime()
+});
+
+const offlineDebtRecordSchema = z.object({
+  id: z.string().cuid(),
+  personName: z.string().min(1).max(80),
+  direction: debtDirectionSchema,
+  currencyCode: z.string().regex(/^[A-Z]{3}$/),
+  dueDate: z.string().datetime().nullable(),
+  note: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  settledAt: z.string().datetime().nullable(),
+  entries: z.array(offlineDebtEntryRecordSchema).min(1)
+});
+
+const legacyOfflineDatabaseSchema = z.object({
+  version: z.literal(LEGACY_DATABASE_VERSION),
   user: userSchema,
   categories: z.array(categorySchema),
   expenses: z.array(offlineExpenseRecordSchema)
 });
 
+const offlineDatabaseSchema = z.object({
+  version: z.literal(DATABASE_VERSION),
+  user: userSchema,
+  categories: z.array(categorySchema),
+  expenses: z.array(offlineExpenseRecordSchema),
+  debts: z.array(offlineDebtRecordSchema)
+});
+
 type OfflineExpenseRecord = z.infer<typeof offlineExpenseRecordSchema>;
+type OfflineDebtEntryRecord = z.infer<typeof offlineDebtEntryRecordSchema>;
+type OfflineDebtRecord = z.infer<typeof offlineDebtRecordSchema>;
+type LegacyOfflineDatabase = z.infer<typeof legacyOfflineDatabaseSchema>;
 type OfflineDatabase = z.infer<typeof offlineDatabaseSchema>;
 
 export class OfflineDataError extends Error {
@@ -145,9 +194,20 @@ const createInitialDatabase = (): OfflineDatabase => {
       createdAt: timestamp,
       updatedAt: timestamp
     })),
-    expenses: []
+    expenses: [],
+    debts: []
   };
 };
+
+const migrateLegacyDatabase = (
+  database: LegacyOfflineDatabase
+): OfflineDatabase => ({
+  version: DATABASE_VERSION,
+  user: database.user,
+  categories: database.categories,
+  expenses: database.expenses,
+  debts: []
+});
 
 const persistDatabase = async (database: OfflineDatabase) => {
   databaseCache = database;
@@ -182,9 +242,23 @@ const loadDatabase = async (): Promise<OfflineDatabase> => {
 
     try {
       const rawValue = await FileSystem.readAsStringAsync(databasePath);
-      const parsedValue = offlineDatabaseSchema.parse(JSON.parse(rawValue));
-      databaseCache = parsedValue;
-      return parsedValue;
+      const parsedJson = JSON.parse(rawValue) as { version?: number };
+
+      if (parsedJson.version === DATABASE_VERSION) {
+        const parsedValue = offlineDatabaseSchema.parse(parsedJson);
+        databaseCache = parsedValue;
+        return parsedValue;
+      }
+
+      if (parsedJson.version === LEGACY_DATABASE_VERSION) {
+        const migratedValue = migrateLegacyDatabase(
+          legacyOfflineDatabaseSchema.parse(parsedJson)
+        );
+        await persistDatabase(migratedValue);
+        return migratedValue;
+      }
+
+      throw new Error("Unsupported local database version");
     } catch {
       const initialDatabase = createInitialDatabase();
       await persistDatabase(initialDatabase);
@@ -212,6 +286,68 @@ const normalizeIcon = (icon?: string) => {
 const normalizeColor = (color?: string) => {
   const trimmed = color?.trim();
   return trimmed?.length ? trimmed : null;
+};
+
+const normalizeDebtNote = (note?: string | null) => {
+  const trimmed = note?.trim();
+  return trimmed?.length ? trimmed : null;
+};
+
+const normalizePersonName = (personName: string) =>
+  personName.trim().replace(/\s+/g, " ");
+
+const getDebtIdentityKey = (personName: string, direction: DebtDirection) =>
+  `${direction}:${normalizePersonName(personName).toLocaleLowerCase()}`;
+
+const calculateOutstandingAmountMinor = (entries: OfflineDebtEntryRecord[]) =>
+  entries.reduce((total, entry) => {
+    if (entry.type === "payment") {
+      return total - entry.amountMinor;
+    }
+
+    return total + entry.amountMinor;
+  }, 0);
+
+const getDebtStatus = (debt: OfflineDebtRecord): DebtStatus =>
+  calculateOutstandingAmountMinor(debt.entries) === 0 ? "settled" : "open";
+
+const ensureDebtExists = (debts: OfflineDebtRecord[], debtId: string) => {
+  const debt = debts.find((item) => item.id === debtId);
+
+  if (!debt) {
+    throw new OfflineDataError("Debt not found", "RESOURCE_NOT_FOUND", 404);
+  }
+
+  return debt;
+};
+
+const ensureDebtIsOpen = (debt: OfflineDebtRecord) => {
+  if (getDebtStatus(debt) !== "open") {
+    throw new OfflineDataError("This debt is already settled", "CONFLICT", 409);
+  }
+};
+
+const ensureUniqueOpenDebt = (
+  debts: OfflineDebtRecord[],
+  personName: string,
+  direction: DebtDirection,
+  currentDebtId?: string
+) => {
+  const identityKey = getDebtIdentityKey(personName, direction);
+  const duplicate = debts.find(
+    (debt) =>
+      debt.id !== currentDebtId &&
+      getDebtStatus(debt) === "open" &&
+      getDebtIdentityKey(debt.personName, debt.direction) === identityKey
+  );
+
+  if (duplicate) {
+    throw new OfflineDataError(
+      "An open debt for this person already exists in this direction",
+      "CONFLICT",
+      409
+    );
+  }
 };
 
 const ensureCategoryExists = (
@@ -263,6 +399,35 @@ const serializeExpense = (
   category: ensureCategoryExists(categories, expense.categoryId)
 });
 
+const serializeDebtEntry = (entry: OfflineDebtEntryRecord): DebtEntryDto => ({
+  id: entry.id,
+  type: entry.type,
+  amountMinor: entry.amountMinor,
+  occurredAt: entry.occurredAt,
+  createdAt: entry.createdAt
+});
+
+const serializeDebt = (debt: OfflineDebtRecord): DebtDto => ({
+  id: debt.id,
+  personName: debt.personName,
+  direction: debt.direction,
+  currencyCode: debt.currencyCode,
+  dueDate: debt.dueDate,
+  note: debt.note,
+  createdAt: debt.createdAt,
+  updatedAt: debt.updatedAt,
+  settledAt: debt.settledAt,
+  status: getDebtStatus(debt),
+  outstandingAmountMinor: calculateOutstandingAmountMinor(debt.entries),
+  entries: [...debt.entries]
+    .sort(
+      (left, right) =>
+        new Date(right.occurredAt).getTime() -
+        new Date(left.occurredAt).getTime()
+    )
+    .map((entry) => serializeDebtEntry(entry))
+});
+
 const sortExpenseRecords = (
   expenses: OfflineExpenseRecord[],
   sort: ListExpensesQuery["sort"]
@@ -287,6 +452,49 @@ const sortExpenseRecords = (
     }
   });
 
+const sortDebtRecords = (debts: OfflineDebtRecord[], status: DebtStatus) =>
+  [...debts].sort((left, right) => {
+    if (status === "open") {
+      const leftDueDate = left.dueDate
+        ? new Date(left.dueDate).getTime()
+        : null;
+      const rightDueDate = right.dueDate
+        ? new Date(right.dueDate).getTime()
+        : null;
+
+      if (
+        leftDueDate !== null &&
+        rightDueDate !== null &&
+        leftDueDate !== rightDueDate
+      ) {
+        return leftDueDate - rightDueDate;
+      }
+
+      if (leftDueDate !== null && rightDueDate === null) {
+        return -1;
+      }
+
+      if (leftDueDate === null && rightDueDate !== null) {
+        return 1;
+      }
+    }
+
+    if (
+      status === "settled" &&
+      left.settledAt &&
+      right.settledAt &&
+      left.settledAt !== right.settledAt
+    ) {
+      return (
+        new Date(right.settledAt).getTime() - new Date(left.settledAt).getTime()
+      );
+    }
+
+    return (
+      new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+    );
+  });
+
 const matchesQuery = (
   expense: OfflineExpenseRecord,
   query: ListExpensesQuery
@@ -309,6 +517,28 @@ const matchesQuery = (
     const haystack = expense.description?.toLowerCase() ?? "";
 
     if (!haystack.includes(query.search.toLowerCase())) {
+      return false;
+    }
+  }
+
+  return true;
+};
+
+const matchesDebtQuery = (debt: OfflineDebtRecord, query: ListDebtsQuery) => {
+  if (debt.direction !== query.direction) {
+    return false;
+  }
+
+  if (getDebtStatus(debt) !== query.status) {
+    return false;
+  }
+
+  if (query.search) {
+    const searchValue = query.search.toLocaleLowerCase();
+    const haystack =
+      `${debt.personName} ${debt.note ?? ""}`.toLocaleLowerCase();
+
+    if (!haystack.includes(searchValue)) {
       return false;
     }
   }
@@ -456,6 +686,203 @@ export const offlineData = {
   getCurrentUser: async () => {
     const database = await loadDatabase();
     return database.user;
+  },
+
+  getDebtSummary: async (): Promise<DebtSummary> => {
+    const database = await loadDatabase();
+    const openDebts = database.debts.filter(
+      (debt) => getDebtStatus(debt) === "open"
+    );
+
+    return openDebts.reduce<DebtSummary>(
+      (summary, debt) => {
+        const outstandingAmountMinor = calculateOutstandingAmountMinor(
+          debt.entries
+        );
+
+        if (debt.direction === "given") {
+          summary.collectAmountMinor += outstandingAmountMinor;
+          summary.openGivenCount += 1;
+        } else {
+          summary.payAmountMinor += outstandingAmountMinor;
+          summary.openTakenCount += 1;
+        }
+
+        return summary;
+      },
+      {
+        currencyCode: database.user.currencyCode,
+        collectAmountMinor: 0,
+        payAmountMinor: 0,
+        openGivenCount: 0,
+        openTakenCount: 0
+      }
+    );
+  },
+
+  getDebts: async (query: ListDebtsQuery) => {
+    const parsedQuery = listDebtsQuerySchema.parse(query);
+    const database = await loadDatabase();
+
+    return sortDebtRecords(
+      database.debts.filter((debt) => matchesDebtQuery(debt, parsedQuery)),
+      parsedQuery.status
+    ).map((debt) => serializeDebt(debt));
+  },
+
+  getDebt: async (id: string) => {
+    const database = await loadDatabase();
+    return serializeDebt(ensureDebtExists(database.debts, id));
+  },
+
+  createDebt: async (payload: CreateDebtRequest) => {
+    const input = createDebtRequestSchema.parse(payload);
+    const database = await loadDatabase();
+    ensureUniqueOpenDebt(database.debts, input.personName, input.direction);
+    const timestamp = nowIso();
+
+    const debt: OfflineDebtRecord = {
+      id: createCuid(),
+      personName: normalizePersonName(input.personName),
+      direction: input.direction,
+      currencyCode: input.currencyCode,
+      dueDate: input.dueDate ?? null,
+      note: normalizeDebtNote(input.note),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      settledAt: null,
+      entries: [
+        {
+          id: createCuid(),
+          type: "initial",
+          amountMinor: input.amountMinor,
+          occurredAt: timestamp,
+          createdAt: timestamp
+        }
+      ]
+    };
+
+    database.debts = [...database.debts, debt];
+    await persistDatabase(database);
+    return serializeDebt(debt);
+  },
+
+  updateDebtMetadata: async (
+    id: string,
+    payload: UpdateDebtMetadataRequest
+  ) => {
+    const input = updateDebtMetadataRequestSchema.parse(payload);
+    const database = await loadDatabase();
+    const debt = ensureDebtExists(database.debts, id);
+    const nextPersonName =
+      input.personName !== undefined
+        ? normalizePersonName(input.personName)
+        : debt.personName;
+
+    if (getDebtStatus(debt) === "open") {
+      ensureUniqueOpenDebt(database.debts, nextPersonName, debt.direction, id);
+    }
+
+    const updatedDebt: OfflineDebtRecord = {
+      ...debt,
+      personName: nextPersonName,
+      dueDate: input.dueDate !== undefined ? input.dueDate : debt.dueDate,
+      note:
+        input.note !== undefined ? normalizeDebtNote(input.note) : debt.note,
+      updatedAt: nowIso()
+    };
+
+    database.debts = database.debts.map((item) =>
+      item.id === id ? updatedDebt : item
+    );
+    await persistDatabase(database);
+    return serializeDebt(updatedDebt);
+  },
+
+  addDebtAmount: async (id: string, payload: AddDebtAmountRequest) => {
+    const input = addDebtAmountRequestSchema.parse(payload);
+    const database = await loadDatabase();
+    const debt = ensureDebtExists(database.debts, id);
+    ensureDebtIsOpen(debt);
+    const timestamp = nowIso();
+
+    const updatedDebt: OfflineDebtRecord = {
+      ...debt,
+      updatedAt: timestamp,
+      entries: [
+        ...debt.entries,
+        {
+          id: createCuid(),
+          type: "increment",
+          amountMinor: input.amountMinor,
+          occurredAt: input.occurredAt ?? timestamp,
+          createdAt: timestamp
+        }
+      ]
+    };
+
+    database.debts = database.debts.map((item) =>
+      item.id === id ? updatedDebt : item
+    );
+    await persistDatabase(database);
+    return serializeDebt(updatedDebt);
+  },
+
+  recordDebtPayment: async (id: string, payload: RecordDebtPaymentRequest) => {
+    const input = recordDebtPaymentRequestSchema.parse(payload);
+    const database = await loadDatabase();
+    const debt = ensureDebtExists(database.debts, id);
+    ensureDebtIsOpen(debt);
+    const outstandingAmountMinor = calculateOutstandingAmountMinor(
+      debt.entries
+    );
+
+    if (input.amountMinor > outstandingAmountMinor) {
+      throw new OfflineDataError(
+        "Payment cannot be greater than the remaining balance",
+        "VALIDATION_ERROR",
+        400
+      );
+    }
+
+    const timestamp = nowIso();
+    const nextEntries = [
+      ...debt.entries,
+      {
+        id: createCuid(),
+        type: "payment" as const,
+        amountMinor: input.amountMinor,
+        occurredAt: input.occurredAt ?? timestamp,
+        createdAt: timestamp
+      }
+    ];
+    const updatedDebt: OfflineDebtRecord = {
+      ...debt,
+      updatedAt: timestamp,
+      settledAt:
+        calculateOutstandingAmountMinor(nextEntries) === 0 ? timestamp : null,
+      entries: nextEntries
+    };
+
+    database.debts = database.debts.map((item) =>
+      item.id === id ? updatedDebt : item
+    );
+    await persistDatabase(database);
+    return serializeDebt(updatedDebt);
+  },
+
+  deleteDebt: async (id: string) => {
+    const database = await loadDatabase();
+    const debtExists = database.debts.some((debt) => debt.id === id);
+
+    if (!debtExists) {
+      throw new OfflineDataError("Debt not found", "RESOURCE_NOT_FOUND", 404);
+    }
+
+    database.debts = database.debts.filter((debt) => debt.id !== id);
+    await persistDatabase(database);
+
+    return { ok: true as const };
   },
 
   getCategories: async () => {
@@ -798,7 +1225,14 @@ export const offlineData = {
         categories: database.categories,
         expenses: sortExpenseRecords(database.expenses, "occurredAt_desc").map(
           (expense) => serializeExpense(expense, database.categories)
-        )
+        ),
+        debts: [...database.debts]
+          .sort(
+            (left, right) =>
+              new Date(right.updatedAt).getTime() -
+              new Date(left.updatedAt).getTime()
+          )
+          .map((debt) => serializeDebt(debt))
       },
       null,
       2

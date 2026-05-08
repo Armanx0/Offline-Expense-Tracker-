@@ -28,6 +28,8 @@ const RootNavigation = () => {
   return (
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="debt/new" />
+      <Stack.Screen name="debt/[id]" />
       <Stack.Screen name="expense/new" />
       <Stack.Screen name="expense/[id]" />
       <Stack.Screen name="category/new" />

@@ -15,10 +15,12 @@ Main features:
 - recent transactions on the dashboard
 - expense create, edit, delete, search, and category filtering
 - expenses list with load-more pagination
+- debt management for money given and taken
+- partial debt repayments and settlement history
 - category creation and deletion
 - light, dark, and system theme support
 - CSV expense export
-- full JSON backup export
+- full JSON backup export including debts
 - confirmation before export actions
 
 ## Offline-Only Behavior
@@ -99,7 +101,7 @@ Current runtime flow:
 2. hooks call the local data layer in `src/data/offline-data.ts`
 3. schemas and types come from `src/contracts`
 4. data is stored in JSON files under the app document directory
-5. React Query refreshes screens after create, update, delete, and export actions
+5. React Query refreshes screens after create, update, delete, debt actions, and export actions
 
 ## Screen Flow
 
@@ -119,6 +121,21 @@ Current runtime flow:
 - `Load more` fetches the next page locally
 - tapping an expense opens `expense/[id]`
 
+### Debt
+
+- shows a debt summary at the top:
+  - `To collect`
+  - `To pay`
+- user can switch between:
+  - `Given`
+  - `Taken`
+- user can also switch between:
+  - `Open`
+  - `History`
+- each debt stays fully separate from expenses and dashboard spending totals
+- open debts are person-based, with one active debt per person per direction
+- tapping a debt opens `debt/[id]`
+
 ### Add Expense
 
 - route: `expense/new`
@@ -131,6 +148,27 @@ Current runtime flow:
 - route: `expense/[id]`
 - supports update and delete
 - changes are saved locally and reflected immediately in the list and dashboard
+
+### Add Debt
+
+- route: `debt/new`
+- user chooses `Given` or `Taken`
+- user enters person name, amount, optional due date, and optional note
+- submitting saves locally
+- after save, the user is returned to the Debt tab
+
+### Debt Detail
+
+- route: `debt/[id]`
+- supports:
+  - metadata update
+  - add amount
+  - record payment or collection
+  - delete
+- partial repayments are supported
+- when the remaining amount reaches zero, the debt is marked settled automatically
+- after update, save amount, or save payment, the user is returned to the Debt tab with refreshed data
+- settled debts move from `Open` to `History`
 
 ### Settings
 
@@ -158,6 +196,7 @@ Stored data:
 - one offline user profile
 - categories
 - expenses
+- debts and debt activity history
 - theme preference
 - dashboard period preference
 
@@ -168,12 +207,17 @@ If you need to debug or extend the app, start here:
 - `app/_layout.tsx`
 - `app/(tabs)/index.tsx`
 - `app/(tabs)/expenses.tsx`
+- `app/(tabs)/debts.tsx`
 - `app/(tabs)/settings.tsx`
+- `app/debt/new.tsx`
+- `app/debt/[id].tsx`
 - `src/data/offline-data.ts`
+- `src/hooks/useDebts.ts`
 - `src/hooks/useExpenses.ts`
 - `src/hooks/useCategories.ts`
 - `src/hooks/useDashboard.ts`
 - `src/hooks/useExports.ts`
+- `src/contracts/debts.ts`
 - `src/store/user.store.ts`
 - `src/store/ui.store.ts`
 - `src/providers/AppProviders.tsx`
@@ -185,6 +229,7 @@ If you need to debug or extend the app, start here:
 - `build:aab` creates an Android App Bundle for store distribution
 - Android shrinking is enabled through `expo-build-properties`
 - APK size will always be larger than the source code because it includes the React Native and Expo runtime plus native libraries
+- debt data is part of the JSON backup, but expense CSV export still contains expense data only
 
 ## Update Safety
 

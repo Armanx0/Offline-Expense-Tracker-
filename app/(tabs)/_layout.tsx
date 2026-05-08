@@ -50,6 +50,19 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="debts"
+        options={{
+          title: "Debt",
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons
+              name="bank-transfer"
+              color={color}
+              size={size}
+            />
+          )
+        }}
+      />
+      <Tabs.Screen
         name="settings"
         options={{
           title: "Settings",
