@@ -21,6 +21,10 @@ web-build/
 expo-env.d.ts
 android/local.properties
 .husky/_/
+.gradle/
+build/
+captures/
+.kotlin/
 
 *.apk
 *.aab
@@ -29,9 +33,19 @@ android/local.properties
 *.jks
 *.keystore
 *.p12
+*.p8
+*.pem
+*.cer
+*.der
 *.mobileprovision
 *.hprof
 *.tsbuildinfo
+google-services.json
+GoogleService-Info.plist
+play-account*.json
+service-account*.json
+keystore.properties
+key.properties
 
 *.log
 npm-debug.log*
