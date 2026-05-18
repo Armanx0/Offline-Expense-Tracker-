@@ -54,6 +54,13 @@ corepack pnpm run build:apk
 corepack pnpm run build:aab
 ```
 
+## Testing
+
+- run the full suite with `corepack pnpm test`
+- the app uses `jest-expo` with a pnpm-aware Jest transform config so React Native and Expo packages are transformed correctly
+- form tests use explicit `testID` selectors for React Native Paper inputs, which keeps them stable across environments
+- if PowerShell blocks `npx` or `pnpm` scripts on your machine, prefer `corepack pnpm ...` commands from the project root
+
 ## Root Structure
 
 Main folders:
@@ -252,8 +259,5 @@ Currently working:
 - `corepack pnpm install`
 - `corepack pnpm lint`
 - `corepack pnpm typecheck`
+- `corepack pnpm test`
 - Android APK builds through EAS
-
-Known issue:
-
-- `corepack pnpm test` still fails in this Windows + pnpm + React Native 0.79 setup because Jest is not transforming `@react-native/js-polyfills` correctly before tests run

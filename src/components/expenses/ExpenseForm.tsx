@@ -78,6 +78,7 @@ export const ExpenseForm = ({
           <TextInput
             label="Amount"
             keyboardType="decimal-pad"
+            testID="expense-form-amount"
             value={value}
             onChangeText={onChange}
             error={Boolean(errors.amount)}
@@ -94,6 +95,7 @@ export const ExpenseForm = ({
         render={({ field: { onChange, value } }) => (
           <TextInput
             label="Description"
+            testID="expense-form-description"
             value={value ?? ""}
             onChangeText={onChange}
             multiline

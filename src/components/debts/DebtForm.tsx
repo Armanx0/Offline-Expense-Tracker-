@@ -103,6 +103,7 @@ export const DebtForm = ({
         render={({ field: { onChange, value } }) => (
           <TextInput
             label="Person name"
+            testID="debt-form-person-name"
             value={value}
             onChangeText={onChange}
             error={Boolean(errors.personName)}
@@ -120,6 +121,7 @@ export const DebtForm = ({
           <TextInput
             label="Amount"
             keyboardType="decimal-pad"
+            testID="debt-form-amount"
             value={value}
             onChangeText={onChange}
             error={Boolean(errors.amount)}
@@ -170,6 +172,7 @@ export const DebtForm = ({
         render={({ field: { onChange, value } }) => (
           <TextInput
             label="Note"
+            testID="debt-form-note"
             value={value ?? ""}
             onChangeText={onChange}
             multiline

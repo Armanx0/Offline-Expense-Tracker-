@@ -1,5 +1,4 @@
 import { fireEvent, render, waitFor } from "@testing-library/react-native";
-import React from "react";
 
 import { DebtForm } from "../src/components/debts/DebtForm";
 
@@ -12,8 +11,8 @@ describe("DebtForm", () => {
       <DebtForm submitLabel="Save debt" onSubmit={onSubmit} />
     );
 
-    fireEvent.changeText(screen.getByLabelText("Person name"), "Aman");
-    fireEvent.changeText(screen.getByLabelText("Amount"), "12.5");
+    fireEvent.changeText(screen.getByTestId("debt-form-person-name"), "Aman");
+    fireEvent.changeText(screen.getByTestId("debt-form-amount"), "12.5");
     fireEvent.press(screen.getByText("Save debt"));
 
     await waitFor(() => {
