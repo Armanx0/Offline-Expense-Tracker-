@@ -20,6 +20,13 @@
     "allowJs": false,
     "baseUrl": "."
   },
-  "include": ["app", "src", "tests", "jest.setup.ts", ".expo/types/**/*.ts"],
+  "include": [
+    "app",
+    "src",
+    "tests",
+    "jest.setup.ts",
+    ".expo/types/**/*.ts",
+    "expo-env.d.ts"
+  ],
   "extends": "expo/tsconfig.base"
 }
